@@ -1,6 +1,6 @@
 use halo2curves::ff::FromUniformBytes;
-use halo2curves::group::Curve;
 use halo2curves::serde::SerdeObject;
+use halo2curves::CurveExt;
 use rand_core::RngCore;
 use sha2::Digest;
 use sha2::Sha512;
@@ -13,7 +13,7 @@ impl<C> VRFKeypair<C>
 where
     C::Scalar: FromUniformBytes<64> + SerdeObject,
     C::AffineRepr: SerdeObject,
-    C: Curve,
+    C: CurveExt,
 {
     /// Build a new pair of VRF keys
     pub fn new(seed: [u8; 32]) -> Self {
@@ -48,9 +48,26 @@ where
         ]
         .concat()
     }
+
+    /// Convert bytes to a key pair.
+    /// Use uncompressed form of the group elements
+    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
+        let private_key = match VRFPrikey::from_raw_bytes(bytes[..32].as_ref()) {
+            Some(p) => p,
+            None => return None,
+        };
+        let public_key = match VRFPubkey::from_raw_bytes(bytes[32..].as_ref()) {
+            Some(p) => p,
+            None => return None,
+        };
+        Some(Self {
+            public_key,
+            private_key,
+        })
+    }
 }
 
-impl<C: Curve> From<VRFPrikey<C>> for VRFPubkey<C> {
+impl<C: CurveExt> From<VRFPrikey<C>> for VRFPubkey<C> {
     fn from(sk: VRFPrikey<C>) -> Self {
         let mut pk = C::generator();
         pk *= sk.scalar_x;
@@ -58,7 +75,7 @@ impl<C: Curve> From<VRFPrikey<C>> for VRFPubkey<C> {
     }
 }
 
-impl<C: Curve> VRFPrikey<C>
+impl<C: CurveExt> VRFPrikey<C>
 where
     C::Scalar: SerdeObject,
 {
@@ -66,15 +83,28 @@ where
     pub fn to_raw_bytes(&self) -> Vec<u8> {
         self.scalar_x.to_raw_bytes()
     }
+
+    /// Convert bytes to a private key.
+    /// Use uncompressed form of the group elements
+    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
+        C::Scalar::from_raw_bytes(bytes).map(|p| Self { scalar_x: p })
+    }
 }
 
 impl<C> VRFPubkey<C>
 where
-    C: Curve,
-    C::AffineRepr: SerdeObject,
+    C: CurveExt,
+    C::Affine: SerdeObject,
 {
     /// Convert the pub key to bytes.
+    /// Use uncompressed form of the group elements
     pub fn to_raw_bytes(&self) -> Vec<u8> {
         self.point_y.to_affine().to_raw_bytes()
+    }
+
+    /// Convert bytes to a public key.
+    /// Use uncompressed form of the group elements
+    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
+        C::Affine::from_raw_bytes(bytes).map(|p| Self { point_y: p.into() })
     }
 }

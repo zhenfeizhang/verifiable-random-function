@@ -8,8 +8,47 @@ use crate::{VRFProof, VRFPubkey};
 
 impl<C> VRFProof<C>
 where
+    C: CurveExt,
+    C::Affine: SerdeObject,
+    C::Scalar: SerdeObject + PrimeField<Repr = [u8; 32]>,
+{
+    /// Convert the proof to bytes.
+    /// Use uncompressed form of the group elements
+    pub fn to_raw_bytes(&self) -> Vec<u8> {
+        [
+            self.challenge_c.to_repr()[..16].as_ref(),
+            self.scalar_s.to_raw_bytes().as_ref(),
+            self.point_gamma.to_raw_bytes().as_ref(),
+        ]
+        .concat()
+    }
+
+    /// Convert bytes to a proof.
+    /// Use uncompressed form of the group elements
+    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
+        let challenge_c =
+            C::Scalar::from_u128(u128::from_le_bytes(bytes[..16].try_into().unwrap()));
+
+        let scalar_s = match C::Scalar::from_raw_bytes(bytes[16..48].as_ref()) {
+            Some(p) => p,
+            None => return None,
+        };
+        let point_gamma = match C::Affine::from_raw_bytes(bytes[48..].as_ref()) {
+            Some(p) => p,
+            None => return None,
+        };
+        Some(Self {
+            challenge_c,
+            scalar_s,
+            point_gamma,
+        })
+    }
+}
+
+impl<C> VRFProof<C>
+where
     C: CurveExt + CofactorGroup,
-    C::Affine: SerdeObject, // C::Subgroup: SerdeObject,
+    C::Affine: SerdeObject,
 {
     /// Convert a VRF proof pi into a VRF output hash beta per draft spec section 5.2.
     /// This function does not verify the proof! For an untrusted proof, instead call
