@@ -1,14 +1,14 @@
 use halo2curves::ff::PrimeField;
-use halo2curves::{ff::FromUniformBytes, serde::SerdeObject, CurveExt};
+use halo2curves::group::GroupEncoding;
+use halo2curves::{ff::FromUniformBytes, CurveExt};
 use sha2::{Digest, Sha512};
 
 use crate::{VRFKeypair, VRFProof};
 
 impl<C> VRFKeypair<C>
 where
-    C::Scalar: FromUniformBytes<64> + SerdeObject,
-    C::Affine: SerdeObject,
     C: CurveExt,
+    C::Scalar: FromUniformBytes<64> + PrimeField<Repr = [u8; 32]>,
 {
     /// Utility function to convert a "secret key" (32-byte seed || 32-byte PK)
     /// into the public point Y, the private scalar x, and truncated hash of the
@@ -18,13 +18,21 @@ where
         // This algorithm differs from the standard as follows:
         // - the standard invokes a single hash and splits the output into x_scalar and h
         // - in order to preserve uniformity over various curves, our x_scalar requires 64 bytes; therefore we invoke the hash function twice
+        let serialized_keypair = [
+            self.public_key.to_bytes().as_ref(),
+            self.private_key.to_bytes().as_ref(),
+        ]
+        .concat();
+
+        // x = hash(key|0)
         let mut hasher = Sha512::new();
-        hasher.update([self.to_raw_bytes(), vec![0]].concat());
+        hasher.update([serialized_keypair.clone(), vec![0]].concat());
         let tmp: [u8; 64] = hasher.finalize().into();
         let x_scalar = C::Scalar::from_uniform_bytes(&tmp);
 
+        // h = hash(key|1)
         let mut hasher = Sha512::new();
-        hasher.update([self.to_raw_bytes(), vec![1]].concat());
+        hasher.update([serialized_keypair, vec![1]].concat());
         let h: [u8; 64] = hasher.finalize().into();
 
         (x_scalar, h[0..32].try_into().unwrap())
@@ -36,8 +44,8 @@ where
     /// Here we instead takes it as an argument, and we compute it in vrf_expand_sk
     pub(crate) fn nonce_gen(&self, generator_h: C::Affine) -> C::Scalar {
         let mut hasher = Sha512::new();
-        hasher.update(self.private_key.to_raw_bytes());
-        hasher.update(generator_h.to_raw_bytes());
+        hasher.update(self.private_key.to_bytes());
+        hasher.update(generator_h.to_bytes());
         let nonce: [u8; 64] = hasher.finalize().into();
         C::Scalar::from_uniform_bytes(&nonce)
     }
@@ -70,7 +78,7 @@ where
             // default hash-to-curve function, instead of the alligator hash
             let hasher = C::hash_to_curve("vrf hash");
             hasher(
-                [self.public_key.to_raw_bytes().as_slice(), alpha]
+                [self.public_key.to_bytes().as_ref(), alpha]
                     .concat()
                     .as_slice(),
             )
@@ -96,16 +104,16 @@ where
         // challenge c = hash(h, gamma, kb, kh)
         let challenge_c = {
             let mut hasher = Sha512::new();
-            hasher.update(generator_h_affine.to_raw_bytes());
-            hasher.update(gamma_affine.to_raw_bytes());
-            hasher.update(kb.to_affine().to_raw_bytes());
-            hasher.update(kh.to_affine().to_raw_bytes());
+            hasher.update(generator_h_affine.to_bytes());
+            hasher.update(gamma_affine.to_bytes());
+            hasher.update(kb.to_affine().to_bytes());
+            hasher.update(kh.to_affine().to_bytes());
             let tmp: [u8; 64] = hasher.finalize().into();
             // in the standard, challenge is a uniform 128 bits integer
             C::ScalarExt::from_u128(u128::from_le_bytes(tmp[0..16].try_into().unwrap()))
         };
 
-        // s = c*x + k
+        // s = c * x + k
         let scalar_s = challenge_c * self.private_key.scalar_x + nonce_k;
 
         VRFProof {

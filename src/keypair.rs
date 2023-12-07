@@ -1,9 +1,11 @@
 use halo2curves::ff::FromUniformBytes;
-use halo2curves::serde::SerdeObject;
+use halo2curves::ff::PrimeField;
+use halo2curves::group::GroupEncoding;
 use halo2curves::CurveExt;
 use rand_core::RngCore;
 use sha2::Digest;
 use sha2::Sha512;
+use subtle::CtOption;
 
 use crate::VRFKeypair;
 use crate::VRFPrikey;
@@ -11,8 +13,7 @@ use crate::VRFPubkey;
 
 impl<C> VRFKeypair<C>
 where
-    C::Scalar: FromUniformBytes<64> + SerdeObject,
-    C::AffineRepr: SerdeObject,
+    C::Scalar: FromUniformBytes<64>,
     C: CurveExt,
 {
     /// Build a new pair of VRF keys
@@ -38,33 +39,6 @@ where
         rng.fill_bytes(&mut seed);
         Self::new(seed)
     }
-
-    /// Convert the key pair to bytes.
-    /// Use uncompressed form of the group elements
-    pub fn to_raw_bytes(&self) -> Vec<u8> {
-        [
-            self.private_key.to_raw_bytes(),
-            self.public_key.to_raw_bytes(),
-        ]
-        .concat()
-    }
-
-    /// Convert bytes to a key pair.
-    /// Use uncompressed form of the group elements
-    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
-        let private_key = match VRFPrikey::from_raw_bytes(bytes[..32].as_ref()) {
-            Some(p) => p,
-            None => return None,
-        };
-        let public_key = match VRFPubkey::from_raw_bytes(bytes[32..].as_ref()) {
-            Some(p) => p,
-            None => return None,
-        };
-        Some(Self {
-            public_key,
-            private_key,
-        })
-    }
 }
 
 impl<C: CurveExt> From<VRFPrikey<C>> for VRFPubkey<C> {
@@ -77,34 +51,36 @@ impl<C: CurveExt> From<VRFPrikey<C>> for VRFPubkey<C> {
 
 impl<C: CurveExt> VRFPrikey<C>
 where
-    C::Scalar: SerdeObject,
+    C::Scalar: PrimeField<Repr = [u8; 32]>,
 {
     /// Convert the private key to bytes.
-    pub fn to_raw_bytes(&self) -> Vec<u8> {
-        self.scalar_x.to_raw_bytes()
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.scalar_x.to_repr()
     }
 
     /// Convert bytes to a private key.
-    /// Use uncompressed form of the group elements
-    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
-        C::Scalar::from_raw_bytes(bytes).map(|p| Self { scalar_x: p })
+    pub fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
+        C::Scalar::from_repr(*bytes)
+            .map(|p| Self { scalar_x: p })
+            .into()
     }
 }
 
-impl<C> VRFPubkey<C>
+impl<C> GroupEncoding for VRFPubkey<C>
 where
-    C: CurveExt,
-    C::Affine: SerdeObject,
+    C: CurveExt + GroupEncoding,
 {
-    /// Convert the pub key to bytes.
-    /// Use uncompressed form of the group elements
-    pub fn to_raw_bytes(&self) -> Vec<u8> {
-        self.point_y.to_affine().to_raw_bytes()
+    type Repr = C::Repr;
+
+    fn from_bytes(repr: &<Self as GroupEncoding>::Repr) -> CtOption<Self> {
+        C::from_bytes(repr).map(|p| Self { point_y: p })
     }
 
-    /// Convert bytes to a public key.
-    /// Use uncompressed form of the group elements
-    pub fn from_raw_bytes(bytes: &[u8]) -> Option<Self> {
-        C::Affine::from_raw_bytes(bytes).map(|p| Self { point_y: p.into() })
+    fn from_bytes_unchecked(repr: &<Self as GroupEncoding>::Repr) -> CtOption<Self> {
+        C::from_bytes_unchecked(repr).map(|p| Self { point_y: p })
+    }
+
+    fn to_bytes(&self) -> <Self as GroupEncoding>::Repr {
+        self.point_y.to_bytes()
     }
 }
